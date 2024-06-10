@@ -1,3 +1,4 @@
+#pragma once
 #include <bits/stdc++.h>
 enum Type{
     NUMBER, // 数字
@@ -7,10 +8,9 @@ enum Type{
     OPERATOR, // 运算符
 };
 class Word{
-private:
+public:
     std::string content; // 单词内容
     Type type; //单词类型
-public:
     Word(){}
     Word(const Word& word) :content(word.content), type(word.type){}
     Word(const std::string &con, Type tp) :content(con), type(tp){}

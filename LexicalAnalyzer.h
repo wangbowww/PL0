@@ -1,3 +1,4 @@
+#pragma once
 #include <bits/stdc++.h>
 #include "Word.h"
 
@@ -96,5 +97,8 @@ public:
             word.print();
             std::cout << "\n";
         }
+    }
+    std::vector<Word> getWords() const {
+        return words;
     }
 };
