@@ -2,6 +2,7 @@
 #include "LexicalAnalyzer.h"
 #include "SyntaxAnalyzer.h"
 int main(){
+    freopen("program.code", "w", stdout);
     LexicalAnalyzer la;
     std::string s;
     bool ok = true;
@@ -11,13 +12,12 @@ int main(){
         }
     }
     if(!ok){
-        std::cout << "Lexical Error"; // 词法错误
-        return 0;
+        return -1;
     }
     // 开始语法分析syntax analysis
     SyntaxAnalyzer sa(la.getWords());
     if(!sa.parse()){
-        std::cout << "Syntax Error"; // 词法错误
-    }else sa.print();
+        return -1;
+    }else sa.printCode();
     return 0;
 }

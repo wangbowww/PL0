@@ -1,6 +1,29 @@
 #pragma once
 #include <bits/stdc++.h>
 #include "Word.h"
+class tableEntry{
+public:
+    std::string name;
+    std::string kind;
+    int par1; // value or level
+    int par2; // adr
+    tableEntry(){}
+    tableEntry(std::string &name, std::string &kind, int par1, int par2){
+        this->name = name; this->kind = kind;
+        this->par1 = par1; this->par2 = par2;
+    }
+};
+
+class Code{
+public:
+    std::string f; // 功能码
+    int l; // 层次差
+    int a; // 位移量
+    Code(std::string f, int l, int a){
+        this->f = f; this->l = l; this->a = a;
+    }
+};
+
 class TreeNode { // 语法分析树节点
 public:
     std::string content; // 内容
@@ -17,21 +40,56 @@ public:
         children.push_back(node);
     }
 };
+
 class SyntaxAnalyzer{
 private:
     std::vector<Word>words; // 词法分析结果，即词语流
+    std::vector<Code>codes; // 目标代码
+    std::vector<tableEntry> entries; // 名字表
+    std::vector<std::pair<int,int>>calls;
     size_t cur; // 当前分析到第几个词了
     int dep; // 记录嵌套子程序深度
+    int DX; // DX初值
     TreeNode* root; // 语法分析树根节点
 public:
     SyntaxAnalyzer(const std::vector<Word>words){
         for(auto word:words){
             this->words.push_back(word);
         }
-        root = nullptr;
+        codes.clear(); entries.clear(); calls.clear();
         dep = cur = 0;
+        DX = 3;
+        root = nullptr;
     }
     
+    int findName(std::string name) const { // 查表
+        int n = entries.size();
+        n--;
+        for(int i=n;i>=0;--i){
+            if(entries[i].name == name) return i; // 找到了
+        }
+        return -1; // 没找到
+    }
+    
+    bool tryToAddEntry(std::string name, std::string kind, int par1){ // 增加表项
+        int idx = findName(name);
+        int le = -1;
+        int le2 = par1;
+        if(kind == "CONSTANT") le2 = 0;
+        if(idx != -1){
+            if(entries[idx].kind == "CONSTANT") le = 0;
+            else le = entries[idx].par1;
+        }
+        if(idx != -1 && le == le2 ) {
+            return false; // 重定义
+        }
+        if(kind == "CONSTANT") entries.emplace_back(name, kind, par1, 0);
+        else if(kind == "VARIABLE") entries.emplace_back(name, kind, par1, DX++);
+        else if(kind == "PROCEDURE") entries.emplace_back(name, kind, par1, 0);
+        else return false; // 不知道什么东西
+        return true;
+    }
+
     bool parse() { // 语法分析主程序，生成语法分析树或者返回false表示语法错误
         //<程序>→<分程序>.
         if(!(words.size()>0 && cur<words.size())) return false;// 词语流不为空, 且cur指针合法
@@ -52,11 +110,25 @@ public:
         // <分程序>→ [<常量说明部分>][<变量说明部分>][<过程说明部分>]<语句>
         assert(words.size()>0 && cur<words.size()); // 词语流不为空, 且cur指针合法
         bool ok = true;
-        TreeNode *nd=node->newNode("SUBPROG"); 
+        DX=3;
+        if(entries.size() == 0){
+            ok &= tryToAddEntry("", "CONSTANT", 0);
+        }
+        entries.back().par2 = codes.size();
+        codes.emplace_back("JMP", 0, 0);
+        int n = entries.size();
+        TreeNode *nd = node->newNode("SUBPROG"); 
         if(words[cur].content == "CONST") ok &= CONST(nd); // 常量说明部分
         if(words[cur].content == "VAR")  ok &= VAR(nd); // 变量说明部分
         if(words[cur].content == "PROCEDURE") ok &= PROCEDURE(nd); // 过程说明部分
+        codes[entries[n-1].par2].a = codes.size();
+        entries[n-1].par2 = codes.size();
+        for(size_t i = 0;i < calls.size(); i++){
+            if(calls[cur].first == n) codes[calls[cur].second].a = entries[n].par2;
+        }
+        codes.emplace_back("INT", 0, DX);
         ok &= SENTENCE(nd); // 语句
+        codes.emplace_back("OPR", 0, 0);
         return ok;
     }
     
@@ -72,6 +144,7 @@ public:
                 child->newNode(words[cur].content);
                 child->newNode(words[cur+1].content);
                 child->newNode(words[cur+2].content);
+                ok &= tryToAddEntry(words[cur].content, "CONSTANT", atoi(words[cur+2].content.c_str()));
                 cur+=3;
             }else return false;
             return true;
@@ -95,9 +168,20 @@ public:
         TreeNode *nd=node->newNode("VARIABLEDECLARE"); // 变量说明部分
         nd->newNode("VAR"), cur++;
         bool ok = true;
+        
         auto VARIABLEDEFINE = [&](){ // 变量定义
             if(words[cur].type == IDENTIFIER){
                 nd->newNode(words[cur].content);
+                // if(words[cur].content == "A"){
+                //      std::cout << "----------------\n";
+                //     for(auto entry:entries){
+                       
+                //         std::cout << entry.name << " " << entry.kind << " " << entry.par1 << " " << entry.par2 << "\n";
+                       
+                //     }
+                //      std::cout << "----------------\n";
+                // }
+                ok &= tryToAddEntry(words[cur].content, "VARIABLE", dep);
                 cur++;
             }else return false;
             return true;
@@ -118,14 +202,18 @@ public:
         // <过程说明部分> → <过程首部><分程序>;{<过程说明部分>}
         assert(words.size()>0 && cur<words.size()); // 词语流不为空, 且cur指针合法
         TreeNode *nd=node->newNode("PROCEDUREDECLARE");
+        bool ok = true;
+        ok &= HEADOFPROCE(nd); // 过程首部
         dep++;
         if(dep>3){ // 超过3层
             return false;
         }
-        bool ok = true;
-        ok &= HEADOFPROCE(nd); // 过程首部
+        int n = entries.size();
+	    int temp = DX;
         ok &= SUBPROG(nd); // 分程序
         dep--;
+        entries.resize(n);
+        DX = temp;
         if(words[cur].content==";"){
             nd->newNode(";");
             cur++;
@@ -141,8 +229,10 @@ public:
         assert(words.size()>0 && cur<words.size()); // 词语流不为空, 且cur指针合法
         TreeNode *head=node->newNode("PROCEDUREHEAD");
         head->newNode("PROCEDURE"), cur++;
+        bool ok = true;
         if(words[cur].type == IDENTIFIER){ // 标识符
             head->newNode(words[cur].content);
+            ok &= tryToAddEntry(words[cur].content, "PROCEDURE", dep);
             cur++;
         }
         else return false;
@@ -151,7 +241,7 @@ public:
             cur++;
         }
         else return false;
-        return true;
+        return ok;
     } 
     
     bool SENTENCE(TreeNode *node){ // 语句
@@ -174,14 +264,21 @@ public:
         // <赋值语句> → <标识符>:=<表达式>
         assert(words.size()>0 && cur<words.size()); // 词语流不为空, 且cur指针合法
         TreeNode *nd=node->newNode("ASSIGNMENT");
+        int idx = -1;
         if(words[cur].type == IDENTIFIER && words[cur+1].content == ":="){
             nd->newNode(words[cur].content);
+            idx = findName(words[cur].content);
+            if(idx == -1 || entries[idx].kind != "VARIABLE"){
+                return false;
+            }
             nd->newNode(words[cur+1].content);
             cur+=2;
         }
         else return false;
         bool ok = true;
         ok &= EXPRESSION(nd); 
+        int x = abs(entries[idx].par1-dep);
+	    codes.emplace_back("STO", x, entries[idx].par2);
         return ok;
     }
     
@@ -215,14 +312,24 @@ public:
             nd->newNode("ODD");
             cur++;
             ok &= EXPRESSION(nd);
+            codes.emplace_back("OPR", 0, 5);
         }
         else{
             ok &= EXPRESSION(nd);
+            int op = -1;
             if(words[cur].content == "=" || words[cur].content == "#" || words[cur].content == "<" 
             || words[cur].content == "<=" || words[cur].content == ">" || words[cur].content == ">="){ // 关系运算符
-                nd->newNode(words[cur].content);cur++;	
+                nd->newNode(words[cur].content);
+                if(words[cur].content == "=") op=6;
+                else if(words[cur].content == "#") op=7;
+                else if(words[cur].content == "<") op=8;
+                else if(words[cur].content == "<=") op=9;
+                else if(words[cur].content == ">") op=10;
+                else if(words[cur].content == ">=") op=11;
+                cur++;	
             } else return false;
             ok &= EXPRESSION(nd);
+            codes.emplace_back("OPR", 0, op);
         }
         return ok;
     }
@@ -232,13 +339,22 @@ public:
         assert(words.size()>0 && cur<words.size()); // 词语流不为空, 且cur指针合法
         bool ok = true;
         TreeNode *nd=node->newNode("EXPRESSION");
+        int op = -1;
+        bool sign = false; // 是不是"-"
         if(words[cur].content == "+" || words[cur].content == "-"){
-            nd->newNode(words[cur].content),cur++;
+            nd->newNode(words[cur].content);
+            if(words[cur].content == "-") sign = true, op = 14;
+            cur++;
         }
         ok &= ITEM(nd);
+        if(sign) codes.emplace_back("OPR", 0, op);
         while(cur < words.size() && (words[cur].content == "+" || words[cur].content == "-")){ // 可能出现的多个项
-            nd->newNode(words[cur].content),cur++;
+            nd->newNode(words[cur].content);
+            if(words[cur].content == "+") op = 1;
+		    else if(words[cur].content == "-") op = 2;
+            cur++;
             ok &= ITEM(nd);
+            codes.emplace_back("OPR", 0, op);
         }
         return ok;
     }
@@ -249,10 +365,15 @@ public:
         bool ok = true;
         TreeNode *nd = node->newNode("ITEM");
         ok &= FACTOR(nd);
+        int op = -1;
         while(cur < words.size() && (words[cur].content == "*" || words[cur].content == "/")){
             nd->newNode(words[cur].content);
+            if(words[cur].content == "/"){
+                op = 4;
+            }else op = 3;
             cur++;
             ok &= FACTOR(nd); 
+            codes.emplace_back("OPR", 0, op);
         }
         return ok;
     }
@@ -263,7 +384,19 @@ public:
         bool ok = true;
         TreeNode *nd=node->newNode("FACTOR");
         if(words[cur].type == IDENTIFIER || words[cur].type == NUMBER){
-            nd->newNode(words[cur].content),cur++;
+            nd->newNode(words[cur].content);
+            if(words[cur].type == IDENTIFIER){
+                int idx = findName(words[cur].content);
+                if(idx == -1){
+                    return false;
+                }
+                if(entries[idx].kind == "CONSTANT") codes.emplace_back("LIT", 0, entries[idx].par1);
+                else if(entries[idx].kind == "VARIABLE") codes.emplace_back("LOD", abs(entries[idx].par1-dep), entries[idx].par2);
+                else return false;
+            }else {
+                codes.emplace_back("LIT", 0, atoi(words[cur].content.c_str()));
+            }
+            cur++;
         }else if(words[cur].content=="("){ // (表达式)
             nd->newNode("LP");
             cur++;
@@ -286,12 +419,15 @@ public:
         nd->newNode("IF");
         cur++;
         ok &= CONDITION(nd);
+        codes.emplace_back("JPC", 0, 0);
         if(words[cur].content == "THEN"){
             nd->newNode("THEN");
             cur++;
         }
         else return false;
+        int n = codes.size();
         ok &= SENTENCE(nd);
+        codes[n-1].a = codes.size();
         return ok;
     }
     
@@ -303,6 +439,12 @@ public:
         cur++;
         if(words[cur].type == IDENTIFIER){
             nd->newNode(words[cur].content);
+            int idx = findName(words[cur].content);
+            if(idx == -1 || entries[idx].kind != "PROCEDURE"){
+                return false;
+            }
+            if(entries[idx].par2 == -1) calls.emplace_back(idx, codes.size());
+            codes.emplace_back("CAL", abs(dep-entries[idx].par1), entries[idx].par2);
             cur++;
         } else return false;
         return true;
@@ -315,11 +457,16 @@ public:
         TreeNode *nd = node->newNode("WHILESENTENCE");
         nd->newNode("WHILE");
         cur++;
+        int n1 = codes.size();
         ok &= CONDITION(nd);
+        codes.emplace_back("JPC", 0, 0);
+	    int n2 = codes.size()-1;
         if(words[cur].content == "DO"){
             nd->newNode("DO"), cur++;
         } else return false;
         ok &= SENTENCE(nd);
+        codes.emplace_back("JMP", 0, n1);
+	    codes[n2].a = codes.size();
         return ok;
     }
     
@@ -329,23 +476,34 @@ public:
         TreeNode *nd = node->newNode("READSENTENCE");
         nd->newNode("READ");
         cur++;
+        bool ok = true;
+        auto read = [&](){
+            if(words[cur].type == IDENTIFIER){
+                nd->newNode(words[cur].content);
+            }else return false;
+            int idx = findName(words[cur].content);
+            if(idx == -1 || entries[idx].kind != "VARIABLE"){
+                return false;
+            }
+            codes.emplace_back("OPR", 0, 12);
+            codes.emplace_back("STO", abs(dep-entries[idx].par1), entries[idx].par2);
+            cur ++ ;
+            return true;
+        };
+
         if(words[cur].content == "("){
             nd->newNode("LP");
             cur++;
-            if(words[cur].type == IDENTIFIER){
-                nd->newNode(words[cur].content), cur++;
-            }else return false;
+            ok &= read();
             while(cur < words.size() && words[cur].content == ","){ // 可能出现的多个标识符
                 nd->newNode("COMMA"),cur++;
-                if(words[cur].type == IDENTIFIER){
-                    nd->newNode(words[cur].content), cur++;
-                }else return false;
+                ok &= read();
             }
             if(words[cur].content == ")"){
                 nd->newNode("RP");cur++;
             }else return false;
         }else return false;
-        return true;
+        return ok;
     }
     
     bool WRITE(TreeNode *node){ // 写
@@ -353,23 +511,37 @@ public:
         assert(words.size()>0 && cur<words.size()); // 词语流不为空, 且cur指针合法
         TreeNode *nd = node->newNode("WRITESENTENCE");
         nd->newNode("WRITE"),cur++;
+        bool ok = true;
+        auto write = [&](){
+            if(words[cur].type == IDENTIFIER){
+				nd->newNode(words[cur].content);
+			}else return false;
+			int idx = findName(words[cur].content);
+			if(idx == -1) return false;
+			if(entries[idx].kind == "CONSTANT"){
+				codes.emplace_back("LIT", 0, entries[idx].par1);
+				codes.emplace_back("OPR", 0, 13);
+			}
+			else if(entries[idx].kind == "VARIABLE"){
+				codes.emplace_back("LOD", abs(dep-entries[idx].par1), entries[idx].par2);
+				codes.emplace_back("OPR", 0, 13);
+			}else return false;
+			cur++;
+            return true;
+        };
         if(words[cur].content=="("){
             nd->newNode("LP");
             cur++;
-            if(words[cur].type == IDENTIFIER){
-                nd->newNode(words[cur].content), cur++;
-            }else return false;
+            ok &= write();
             while(words[cur].content == ","){
                 nd->newNode("COMMA"),cur++;
-                if(words[cur].type == IDENTIFIER){
-                    nd->newNode(words[cur].content), cur++;
-                }else return false;
+                ok &= write();
             }
             if(words[cur].content == ")"){
                 nd->newNode("RP"), cur++;
             }else return false;
         }else return false;
-        return true;
+        return ok;
     }
 
     bool EMPTY(TreeNode *node){ // 空语句
@@ -389,7 +561,16 @@ public:
             std::cout << ")";
         }
     }
+    
     void print() const { // 将语法分析树输出成括号形式
         dfs(root);
     }
+    
+    void printCode() const {
+        for(auto code:codes){
+            std::cout << code.f << " " << code.l << " " << code.a << "\n";
+        }
+    }
+
+    std::vector<Code> getCodes() const {return codes;}
 };
