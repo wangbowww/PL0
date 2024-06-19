@@ -46,7 +46,6 @@ private:
     std::vector<Word>words; // 词法分析结果，即词语流
     std::vector<Code>codes; // 目标代码
     std::vector<tableEntry> entries; // 名字表
-    std::vector<std::pair<int,int>>calls;
     size_t cur; // 当前分析到第几个词了
     int dep; // 记录嵌套子程序深度
     int DX; // DX初值
@@ -56,7 +55,7 @@ public:
         for(auto word:words){
             this->words.push_back(word);
         }
-        codes.clear(); entries.clear(); calls.clear();
+        codes.clear(); entries.clear();
         dep = cur = 0;
         DX = 3;
         root = nullptr;
@@ -123,9 +122,6 @@ public:
         if(words[cur].content == "PROCEDURE") ok &= PROCEDURE(nd); // 过程说明部分
         codes[entries[n-1].par2].a = codes.size();
         entries[n-1].par2 = codes.size();
-        for(size_t i = 0;i < calls.size(); i++){
-            if(calls[cur].first == n) codes[calls[cur].second].a = entries[n].par2;
-        }
         codes.emplace_back("INT", 0, DX);
         ok &= SENTENCE(nd); // 语句
         codes.emplace_back("OPR", 0, 0);
@@ -443,7 +439,6 @@ public:
             if(idx == -1 || entries[idx].kind != "PROCEDURE"){
                 return false;
             }
-            if(entries[idx].par2 == -1) calls.emplace_back(idx, codes.size());
             codes.emplace_back("CAL", abs(dep-entries[idx].par1), entries[idx].par2);
             cur++;
         } else return false;
